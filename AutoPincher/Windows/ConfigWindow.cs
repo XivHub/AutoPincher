@@ -37,7 +37,7 @@ public sealed class ConfigWindow : Window, IDisposable
             cfg.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("When off, the Auto Pinch button and /ffmpinch are inert.");
+            ImGui.SetTooltip("When off, the Auto Pinch button and /autopinch are inert.");
 
         int delayMs = cfg.PinchPerItemDelayMs;
         if (ImGui.SliderInt("Per-item delay (ms)##itemdelay", ref delayMs, 50, 2000))

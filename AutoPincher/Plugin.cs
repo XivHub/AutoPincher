@@ -21,7 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IMarketBoard MarketBoard { get; private set; } = null!;
 
     private const string CommandName = "/autopincher";
-    private const string PinchCommandName = "/ffmpinch";
+    private const string PinchCommandName = "/autopinch";
 
     public static Configuration Configuration { get; private set; } = null!;
 

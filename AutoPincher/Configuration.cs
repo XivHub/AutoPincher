@@ -10,7 +10,7 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>
     /// Show the "Auto Pinch" button on AutoRetainer's retainer-list controls and
-    /// allow the /ffmpinch command. When false the plugin stays loaded but inert.
+    /// allow the /autopinch command. When false the plugin stays loaded but inert.
     /// </summary>
     public bool EnablePinch { get; set; } = true;
 

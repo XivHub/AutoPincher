@@ -16,7 +16,7 @@ standalone plugin with all the data-streaming stripped out.
 - **All retainers:** with AutoRetainer installed, an **Auto Pinch** button appears
   next to its retainer-list controls. Open your retainer list (the bell) and click
   it to walk every retainer with active listings.
-- **One retainer:** open a retainer's sell list and run `/ffmpinch` (or the
+- **One retainer:** open a retainer's sell list and run `/autopinch` (or the
   *Pinch open retainer now* button in the config window).
 - **Config:** `/autopincher` opens the window — toggle the plugin, and tune the
   per-item delay and the market-board request delay.
@@ -28,7 +28,7 @@ Do not touch the keyboard/mouse while a pinch session runs; it drives the game U
 - **ECommons** (UI automation, throttling, IPC).
 - **AutoRetainer** — *optional*. Used only for the inline Auto Pinch button and to
   pause AR's own automation during a run. The plugin works without it via
-  `/ffmpinch`.
+  `/autopinch`.
 
 ## Build / deploy
 

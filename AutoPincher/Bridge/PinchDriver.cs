@@ -108,7 +108,7 @@ public sealed class PinchDriver : IDisposable
         => GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon)
            && GenericHelpers.IsAddonReady(addon);
 
-    /// <summary>Pinch only the currently-open retainer (the /ffmpinch command).</summary>
+    /// <summary>Pinch only the currently-open retainer (the /autopinch command).</summary>
     public async Task RunAsync(CancellationToken ct)
     {
         (ulong retainerCid, string retainerName) = await Svc.Framework.RunOnFrameworkThread(ReadActiveRetainer);
