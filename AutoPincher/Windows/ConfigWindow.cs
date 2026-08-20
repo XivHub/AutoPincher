@@ -25,7 +25,9 @@ public sealed class ConfigWindow : Window, IDisposable
 
         ImGui.TextWrapped(
             "Undercuts every retainer listing by 1 gil below the cheapest live " +
-            "competitor on the market board. Fully local — nothing is sent anywhere.");
+            "competitor on the market board. Your own retainers and housing " +
+            "mannequins are never treated as competitors. Fully local — nothing " +
+            "is sent anywhere.");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

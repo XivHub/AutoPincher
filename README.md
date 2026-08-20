@@ -3,8 +3,11 @@
 A lightweight, fully-local Dalamud plugin that undercuts your FFXIV retainer
 market listings. It reads each listing straight from game memory, uses the
 in-game market board's **Compare Prices** to find the current cheapest
-competitor, and lowers your asking price to **1 gil below it** (holding when
-your own retainer is already the cheapest, or when the board is empty).
+competitor, and sets your asking price to **1 gil below it**. Your own
+retainers and housing mannequins are never competitors, so two retainers
+selling the same item land on the same price instead of chasing each other
+down; with nobody to undercut the listing is skipped or priced from sale
+history.
 
 No server, no telemetry, no Universalis upload — nothing leaves your client.
 This is the pinch engine from

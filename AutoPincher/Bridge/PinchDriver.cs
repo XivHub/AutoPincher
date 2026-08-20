@@ -22,8 +22,9 @@ namespace AutoPincher.Bridge;
 /// Drives the in-game UI to reprice retainer listings by undercutting the
 /// cheapest live market-board competitor by 1 gil. Fully local: every price is
 /// read from the game's own "Compare Prices" market-board lookup; nothing leaves
-/// the client. Holds a listing unchanged when our own retainer is already the
-/// cheapest, or when the board is empty.
+/// the client. Our own retainers and housing mannequins are not competitors, so
+/// the price never chases our own listings down; with nobody to undercut the
+/// listing is skipped or priced from sale history.
 ///
 /// The UI automation mirrors AutoRetainer's pipeline idioms (self-throttling
 /// fire-until-observed steps) and was verified in-game in the FFMarketConnector
@@ -52,11 +53,13 @@ public sealed class PinchDriver : IDisposable
 
     // --- Live market-board compare state ---
     // Resolved compare result per (itemId, hq), cached so the same item across
-    // retainers costs one market-board request per session. Cheapest is the
-    // cheapest competitor unit price (0 = no live competitor); HistoryPrice is the
-    // most recent sale's unit price from the history window (0 = none), used as the
-    // fallback when nobody else is currently listing the item.
-    private readonly record struct CompareResult(uint Cheapest, bool IsOwn, uint HistoryPrice);
+    // retainers costs one market-board request per session. The result holds only
+    // board state, never anything about the listing being edited, so it stays
+    // valid for a second retainer selling the same item — our own reprices cannot
+    // move a competitor's price. Competitor is the cheapest undercuttable unit
+    // price (0 = none); HistoryPrice is the most recent sale's unit price from the
+    // history window (0 = none), used as the fallback when nobody else is listing.
+    private readonly record struct CompareResult(uint Competitor, uint HistoryPrice);
     private readonly Dictionary<(uint, bool), CompareResult> _liveCompareCache = new();
     // The (name, hq) we've fired a Compare request for and are polling on; null
     // when not mid-request. Deadline is wall-clock ms (Environment.TickCount64).
@@ -67,14 +70,15 @@ public sealed class PinchDriver : IDisposable
     // Retry budget for the current live-compare item. The market board returns NO
     // offerings packet when rate-limited ("Please wait a short while and try
     // again") or when a request is dropped, which surfaces here as a deadline
-    // timeout (a genuinely empty board instead fires an empty offerings event ->
-    // cheapest=0). Re-fire the Compare a few times, backed off by the MB throttle,
+    // timeout (a genuinely empty board instead fires an empty offerings event).
+    // Re-fire the Compare a few times, backed off by the MB throttle,
     // before giving up on the item. Reset when a new item's request is fired.
     private int _lcRetries;
     private const int LiveCompareMaxRetries = 3;
 
     // Active session's retainer CIDs, read from RetainerManager at session start.
-    // Used for the live-compare "is this listing ours?" check.
+    // Passed to the market-board listener so our own listings are excluded from
+    // the competitor set.
     private HashSet<ulong> _sessionOwnCids = new();
 
     public bool IsBusy => _tasks.IsBusy;
@@ -101,8 +105,22 @@ public sealed class PinchDriver : IDisposable
     }
 
     // Early-exit: number of rows on the current retainer still expected to need a
-    // window opened (== live-compare rows). Decremented as each compare finishes.
+    // window opened. Counts ROWS, not distinct items, so duplicate stacks of the
+    // same item can't consume the budget meant for other rows. Decremented as
+    // each compare finishes.
     private int _rowsRemaining = int.MaxValue;
+
+    // Set when the current row can't be repriced — its context menu offers no
+    // "Adjust Price" (a mannequin listing), or the window never opened — so the
+    // later steps advance instead of waiting on a window that isn't coming.
+    private bool _rowUnavailable;
+    // Wall-clock deadline for getting this row's RetainerSell window open, stamped
+    // by BeginRow. The TaskManager's own time limit aborts the ENTIRE queue on
+    // expiry, which turns one bad row into a dead session, so each row gives up on
+    // itself first. Covers only the two click steps; the market-board compare that
+    // follows has its own, longer, retry budget.
+    private long _rowDeadlineMs;
+    private const long RowOpenTimeoutMs = 10000;
 
     public unsafe bool CanPinchNow()
         => GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon)
@@ -350,15 +368,18 @@ public sealed class PinchDriver : IDisposable
         return true;
     }
 
-    // Build the (name,hq) -> (itemId, currentPrice) live-compare map for every
-    // resolvable priced row, then visit each visual row once and let
-    // ApplyRepriceFromWindow run the market-board compare for the item the price
-    // window actually opens. Order-independent (the sell list is category-sorted,
-    // so the row index is NOT a reliable item key) and misprice-proof.
+    // Build the (name,hq) -> itemId live-compare map for every resolvable priced
+    // row, then visit each visual row once and let ApplyRepriceFromWindow run the
+    // market-board compare for the item the price window actually opens.
+    // Order-independent (the sell list is category-sorted, so the row index is NOT
+    // a reliable item key) and misprice-proof. The current price is read from the
+    // open window rather than carried in this map, so duplicate stacks of one item
+    // — which collapse to a single map entry — are each compared against their own
+    // asking price.
     private void EnqueuePinchTasks(List<RetainerMarketRow> rows, bool closeOuterList, out int intended)
     {
         intended = 0;
-        var liveCompare = new Dictionary<(string Name, bool Hq), (uint ItemId, uint CurPrice)>();
+        var liveCompare = new Dictionary<(string Name, bool Hq), uint>();
 
         foreach (var row in rows)
         {
@@ -368,17 +389,20 @@ public sealed class PinchDriver : IDisposable
                 _log.Warning("Pinch: skip item {Id} — could not resolve item name", row.ItemId);
                 continue;
             }
-            liveCompare[(name, row.Hq)] = (row.ItemId, row.Price);
+            liveCompare[(name, row.Hq)] = row.ItemId;
             intended++;
         }
 
-        _rowsRemaining = liveCompare.Count;
+        // Budget in rows (== intended), not distinct map entries: two stacks of
+        // the same item are two windows to open.
+        _rowsRemaining = intended;
 
         if (liveCompare.Count > 0)
         {
             for (int i = 0; i < rows.Count; i++)
             {
                 int rowIndex = i;
+                _tasks.Enqueue(BeginRow);
                 _tasks.Enqueue(() => OpenItemContextMenu(rowIndex));
                 _tasks.Enqueue(ClickAdjustPrice);
                 _tasks.Enqueue(() => ApplyRepriceFromWindow(liveCompare));
@@ -465,6 +489,24 @@ public sealed class PinchDriver : IDisposable
 
     // --- Per-row UI helpers (mirrored from Dagobert/AutoPinch.cs) ---
 
+    // Starts a row: clears the previous row's verdict and stamps its deadline.
+    private bool? BeginRow()
+    {
+        _rowUnavailable = false;
+        _rowDeadlineMs = Environment.TickCount64 + RowOpenTimeoutMs;
+        return true;
+    }
+
+    // Give up on the current row instead of letting the step time out and take
+    // the whole queue with it. Returns the terminal value for the calling step.
+    private bool? SkipRow(string reason)
+    {
+        _log.Warning("Pinch: {Reason}; skipping row", reason);
+        _rowUnavailable = true;
+        if (_rowsRemaining != int.MaxValue && _rowsRemaining > 0) _rowsRemaining--;
+        return true;
+    }
+
     // Click slot in RetainerSellList → opens ContextMenu.
     //
     // Fire-until-observed: the game can silently drop our callback when
@@ -477,6 +519,8 @@ public sealed class PinchDriver : IDisposable
             return true;
         if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("ContextMenu", out var cm) && cm->IsVisible)
             return true;
+        if (Environment.TickCount64 >= _rowDeadlineMs)
+            return SkipRow($"no context menu for row {slot}");
         if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSellList", out var addon)
             || !GenericHelpers.IsAddonReady(addon))
         {
@@ -491,11 +535,19 @@ public sealed class PinchDriver : IDisposable
     // Click "Adjust Price" on ContextMenu → opens RetainerSell popup.
     private unsafe bool? ClickAdjustPrice()
     {
+        if (_rowUnavailable) return true;
         if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("RetainerSell", out var rs) && rs->IsVisible)
             return true;
         if (_rowsRemaining <= 0
             && !(GenericHelpers.TryGetAddonByName<AtkUnitBase>("ContextMenu", out var cmOpen) && cmOpen->IsVisible))
             return true;
+        if (Environment.TickCount64 >= _rowDeadlineMs)
+        {
+            // Leave nothing open for the next row to trip over.
+            if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("ContextMenu", out var stale) && stale->IsVisible)
+                stale->Close(true);
+            return SkipRow("price window never opened");
+        }
         if (!GenericHelpers.TryGetAddonByName<AtkUnitBase>("ContextMenu", out var addon)
             || !GenericHelpers.IsAddonReady(addon))
         {
@@ -512,9 +564,8 @@ public sealed class PinchDriver : IDisposable
         if (!hasAdjust)
         {
             if (!GenericThrottle) return false;
-            _log.Warning("Pinch: context menu has no 'Adjust Price' entry (mannequin?); closing");
             addon->Close(true);
-            return true;
+            return SkipRow("context menu has no 'Adjust Price' entry (mannequin)");
         }
         if (!GenericThrottle) return false;
         // Index 0 = "Adjust Price" (Dagobert's assumption).
@@ -529,8 +580,11 @@ public sealed class PinchDriver : IDisposable
     //   1. eligible for live compare -> compare sub-machine
     //   2. otherwise                 -> cancel, leave unchanged
     private unsafe bool? ApplyRepriceFromWindow(
-        Dictionary<(string Name, bool Hq), (uint ItemId, uint CurPrice)> liveCompare)
+        Dictionary<(string Name, bool Hq), uint> liveCompare)
     {
+        // The row had no "Adjust Price" (mannequin): no window will ever open.
+        if (_rowUnavailable) return true;
+
         if (!GenericHelpers.TryGetAddonByName<AddonRetainerSell>("RetainerSell", out var addon)
             || !GenericHelpers.IsAddonReady(&addon->AtkUnitBase))
         {
@@ -544,9 +598,11 @@ public sealed class PinchDriver : IDisposable
         string name = NormalizeItemName(raw);
         var key = (name, hq);
 
-        if (name.Length != 0 && liveCompare.TryGetValue(key, out var lc))
+        if (name.Length != 0 && liveCompare.TryGetValue(key, out uint itemId))
         {
-            bool? r = LiveCompareStep(addon, name, hq, lc.CurPrice, lc.ItemId);
+            // This stack's own asking price, not a sibling stack's.
+            uint curPrice = (uint)addon->AskingPrice->Value;
+            bool? r = LiveCompareStep(addon, name, hq, curPrice, itemId);
             // Decrement the early-exit budget once, when the compare finishes
             // (terminal true), not on the false retries while waiting.
             if (r == true && _rowsRemaining != int.MaxValue) _rowsRemaining--;
@@ -594,27 +650,29 @@ public sealed class PinchDriver : IDisposable
         }
 
         // Waiting: poll the listener for offerings + history.
-        uint? cheapest = _mb.TryGetCheapest(out bool isOwn);
+        uint? competitor = _mb.TryGetCheapestCompetitor(out bool offeringsArrived, out bool boardEmpty);
         uint? history = _mb.TryGetHistory(out bool historyArrived);
 
-        // A live competitor exists — resolve immediately and undercut.
-        if (cheapest is not null && cheapest.Value > 0)
-            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(cheapest.Value, isOwn, history ?? 0u));
+        // A live competitor exists — resolve immediately and undercut. Offerings
+        // arrive price-ascending, so the first one we accept is the cheapest.
+        if (competitor is not null)
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(competitor.Value, history ?? 0u));
 
         // An empty offerings packet arrived (explicit "nothing listed"): no live
         // competitor, resolve now using the history fallback.
-        if (cheapest is 0u)
-            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, false, history ?? 0u));
+        if (boardEmpty)
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
 
-        // No offerings packet yet. The board sends only a history packet when
-        // nothing is currently listed, so wait out the deadline before concluding
-        // "no competitor" (a real competitor's offerings packet beats the deadline).
+        // Listings exist but none of them is undercuttable so far (all ours, all
+        // mannequins) — or no offerings packet has arrived yet. Both wait out the
+        // deadline: offerings come in batches of ~10, so a competitor sitting
+        // behind our own cheap listings can still be in a later packet.
         if (now >= _lcDeadlineMs)
         {
-            // History arrived but offerings never did -> the item has no live
-            // competitor. Use the history fallback instead of timing out.
-            if (historyArrived)
-                return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, false, history ?? 0u));
+            // Something came back, just nothing to undercut. Treat it as "no
+            // competitor" and use the history fallback instead of timing out.
+            if (offeringsArrived || historyArrived)
+                return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
 
             // Nothing arrived at all: rate-limited ("please wait a short while")
             // or a dropped request. Re-fire the Compare, backed off by the MB
@@ -633,7 +691,7 @@ public sealed class PinchDriver : IDisposable
             }
             _log.Warning("Pinch: live-compare timed out for {Item} after {Max} retries; leaving unchanged",
                 name, LiveCompareMaxRetries);
-            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, false, 0u));
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, 0u));
         }
         return false; // keep waiting
     }
@@ -650,9 +708,13 @@ public sealed class PinchDriver : IDisposable
     }
 
     // Decide and write the price from a resolved compare result.
-    //   Cheapest > 0  -> undercut the cheapest competitor by 1 (unless it's ours).
-    //   Cheapest == 0 -> no live competitor: either skip (config) or fall back to
-    //                    the history window's most recent sale price.
+    //   Competitor > 0  -> take the highest price still under the cheapest
+    //                      competitor. Our own retainers and mannequins were
+    //                      never in that number, so two retainers holding the
+    //                      same item land on the same price instead of racing
+    //                      each other down a gil per pass.
+    //   Competitor == 0 -> nobody to undercut: either skip (config) or fall back
+    //                      to the history window's most recent sale price.
     private unsafe void ApplyCompareResult(
         AddonRetainerSell* addon, string name, bool hq, uint curPrice, CompareResult result)
     {
@@ -661,19 +723,12 @@ public sealed class PinchDriver : IDisposable
         if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("ItemSearchResult", out var isr) && isr->IsVisible)
             isr->Close(true);
 
-        if (result.Cheapest == 0)
+        if (result.Competitor == 0)
         {
             ApplyNoCompetitor(addon, name, hq, curPrice, result.HistoryPrice);
             return;
         }
-        if (result.IsOwn)
-        {
-            _log.Information("Pinch: {Item} (hq={Hq}) — cheapest listing is our own ({Price}); holding",
-                name, hq, result.Cheapest);
-            Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel
-            return;
-        }
-        uint target = result.Cheapest > 1 ? result.Cheapest - 1 : 1;
+        uint target = result.Competitor > 1 ? result.Competitor - 1 : 1;
         if (target == curPrice)
         {
             _log.Debug("Pinch: {Item} (hq={Hq}) — already at live undercut {Price}", name, hq, target);
@@ -681,7 +736,7 @@ public sealed class PinchDriver : IDisposable
             return;
         }
         _log.Information("Pinch: live-undercut {Item} (hq={Hq}) {Old} -> {New} (competitor {Comp})",
-            name, hq, curPrice, target, result.Cheapest);
+            name, hq, curPrice, target, result.Competitor);
         addon->AskingPrice->SetValue((int)target);
         Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
         _sessionReprices++;

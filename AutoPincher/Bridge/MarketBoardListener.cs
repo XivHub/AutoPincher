@@ -30,9 +30,14 @@ public sealed class MarketBoardListener : IDisposable
     // The player's own retainer CIDs, set per request so "is this my listing?"
     // is decided against the real roster, not the pinned-character filter.
     private HashSet<ulong> _ownRetainerCids = new();
-    // Result for the awaited item, once offerings arrive. null = not yet.
-    private uint? _cheapest;
-    private bool _cheapestIsOwn;
+    // Cheapest genuine competitor for the awaited item; null until one is seen.
+    // Our own retainers and housing mannequins are excluded (see OnOfferings).
+    private uint? _cheapestCompetitor;
+    // An offerings packet for the awaited item has arrived (with or without an
+    // undercuttable listing in it); _boardEmpty additionally means the board
+    // came back with no listings at all.
+    private bool _offeringsArrived;
+    private bool _boardEmpty;
     // History-window fallback: the most recent sale's unit price (HQ-matched) and
     // whether a history packet for the awaited item has arrived at all. The game
     // answers a "Compare Prices" lookup with BOTH an offerings packet and a
@@ -62,24 +67,29 @@ public sealed class MarketBoardListener : IDisposable
             _awaitingItemId = itemId;
             _awaitingHq = hq;
             _ownRetainerCids = ownRetainerCids;
-            _cheapest = null;
-            _cheapestIsOwn = false;
+            _cheapestCompetitor = null;
+            _offeringsArrived = false;
+            _boardEmpty = false;
             _mostRecentSale = null;
             _historyArrived = false;
         }
     }
 
     /// <summary>
-    /// The cheapest competitor unit price observed for the awaited item, or null
-    /// if offerings haven't arrived yet. <paramref name="isOwn"/> is true when
-    /// the cheapest listing belongs to one of the player's own retainers.
+    /// The cheapest unit price we may undercut for the awaited item, or null if
+    /// no such listing has been seen. Our own retainers and housing mannequins
+    /// are not competitors and never appear here.
+    /// <paramref name="offeringsArrived"/> is true once any offerings packet for
+    /// the item has been processed; <paramref name="boardEmpty"/> additionally
+    /// means the board reported no listings at all.
     /// </summary>
-    public uint? TryGetCheapest(out bool isOwn)
+    public uint? TryGetCheapestCompetitor(out bool offeringsArrived, out bool boardEmpty)
     {
         lock (_gate)
         {
-            isOwn = _cheapestIsOwn;
-            return _cheapest;
+            offeringsArrived = _offeringsArrived;
+            boardEmpty = _boardEmpty;
+            return _cheapestCompetitor;
         }
     }
 
@@ -103,21 +113,6 @@ public sealed class MarketBoardListener : IDisposable
     {
         try
         {
-            var listings = offerings.ItemListings;
-            if (listings == null || listings.Count == 0)
-            {
-                lock (_gate)
-                {
-                    if (_awaitingItemId != 0)
-                    {
-                        // Empty board: record "no competitor" so the waiter can
-                        // stop waiting rather than time out.
-                        _cheapest ??= 0u;
-                    }
-                }
-                return;
-            }
-
             uint awaitId;
             bool wantHq;
             HashSet<ulong> own;
@@ -129,18 +124,32 @@ public sealed class MarketBoardListener : IDisposable
             }
             if (awaitId == 0) return;
 
+            var listings = offerings.ItemListings;
+            if (listings == null || listings.Count == 0)
+            {
+                lock (_gate)
+                {
+                    if (_awaitingItemId != awaitId) return;
+                    _offeringsArrived = true;
+                    _boardEmpty = true;
+                }
+                return;
+            }
+
             // Offerings only ever concern one item; confirm it matches what we
             // asked for (offerings arrive in batches of ~10, possibly several
             // packets — keep the running minimum across them).
             if (listings[0].ItemId != awaitId) return;
 
-            // Match HQ: when selling an HQ item that can be HQ, only HQ
-            // competitors are comparable; otherwise compare against all.
-            var candidates = listings.Where(l => !wantHq || l.IsHq).ToList();
-            if (candidates.Count == 0) return; // wait for a batch with a match
-
-            var best = candidates.OrderBy(l => l.PricePerUnit).First();
-            bool isOwn = own.Contains(best.RetainerId);
+            // Only genuine competitors anchor the price:
+            //  - our own retainers are excluded, so a second retainer selling the
+            //    same item can never make us undercut ourselves;
+            //  - housing mannequins are display stock, not a market anchor;
+            //  - HQ: when selling an HQ item, only HQ listings are comparable.
+            var candidates = listings
+                .Where(l => (!wantHq || l.IsHq) && !l.OnMannequin && !own.Contains(l.RetainerId))
+                .ToList();
+            uint? best = candidates.Count == 0 ? null : candidates.Min(l => l.PricePerUnit);
 
             lock (_gate)
             {
@@ -149,11 +158,9 @@ public sealed class MarketBoardListener : IDisposable
                 // item is unchanged, so a late packet from the prior request cycle
                 // is accepted: harmless, since it's the same item's current price.
                 if (_awaitingItemId != awaitId) return; // a new request superseded us
-                if (_cheapest is null || _cheapest == 0u || best.PricePerUnit < _cheapest)
-                {
-                    _cheapest = best.PricePerUnit;
-                    _cheapestIsOwn = isOwn;
-                }
+                _offeringsArrived = true;
+                if (best is not null && (_cheapestCompetitor is null || best < _cheapestCompetitor))
+                    _cheapestCompetitor = best;
             }
         }
         catch (Exception ex)
