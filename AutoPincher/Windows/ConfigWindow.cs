@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
+using XivHubPluginKit.UI;
 using AutoPincher.Bridge;
 
 namespace AutoPincher.Windows;
@@ -90,8 +91,11 @@ public sealed class ConfigWindow : Window, IDisposable
         {
             bool canPinch = cfg.EnablePinch && _driver.CanPinchNow();
             if (!canPinch) ImGui.BeginDisabled();
-            if (ImGui.Button("Pinch open retainer now"))
-                _ = Task.Run(() => _driver.RunAsync(CancellationToken.None));
+            using (HubStyle.Primary())
+            {
+                if (ImGui.Button("Pinch open retainer now"))
+                    _ = Task.Run(() => _driver.RunAsync(CancellationToken.None));
+            }
             if (!canPinch) ImGui.EndDisabled();
             if (!_driver.CanPinchNow() && ImGui.IsItemHovered())
                 ImGui.SetTooltip("Open a retainer's sell list first.");
@@ -101,8 +105,25 @@ public sealed class ConfigWindow : Window, IDisposable
         if (!string.IsNullOrEmpty(last))
         {
             ImGui.Spacing();
-            ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), $"Last run: {last}");
+            ImGui.TextColored(HubStyle.Faint, $"Last run: {last}");
         }
+
+        DrawThemeSection();
+    }
+
+    /// <summary>
+    /// The theme editor is generated from the kit's option table, so this stays
+    /// one call however many themed values the kit grows.
+    /// </summary>
+    private static void DrawThemeSection()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.Text("Appearance");
+        ImGui.TextColored(HubStyle.Faint, "Shared with every XIV Hub plugin.");
+        ImGui.Spacing();
+        HubThemeEditor.Draw(Plugin.ThemeConfig);
     }
 
     public void Dispose() { }

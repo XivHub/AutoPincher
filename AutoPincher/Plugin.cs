@@ -7,6 +7,7 @@ using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using ECommons;
+using XivHubPluginKit.UI;
 using AutoPincher.Bridge;
 using AutoPincher.Windows;
 
@@ -26,6 +27,10 @@ public sealed class Plugin : IDalamudPlugin
     public static Configuration Configuration { get; private set; } = null!;
 
     public readonly WindowSystem WindowSystem = new("AutoPincher");
+
+    /// <summary>Shared across every XIV Hub plugin; see XivHubPluginKit/UI/THEME.md.</summary>
+    public static HubThemeConfigService ThemeConfig { get; private set; } = null!;
+
     private ConfigWindow ConfigWindow { get; init; }
     private readonly PinchOverlay _pinchOverlay;
 
@@ -37,6 +42,11 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         ECommonsMain.Init(PluginInterface, this);
+
+        ThemeConfig = new HubThemeConfigService(
+            PluginInterface.GetPluginConfigDirectory(),
+            (msg, ex) => Log.Warning(ex, msg));
+        HubStyle.Init(ThemeConfig);
 
         _mbListener = new MarketBoardListener(MarketBoard, Log);
         _pinchDriver = new PinchDriver(Log, ChatGui, _mbListener);
@@ -55,7 +65,7 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "Undercut the currently-open retainer's listings (requires its sell list open)",
         });
 
-        PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw += DrawThemed;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleConfigUi;
 
@@ -66,7 +76,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         ECommonsMain.Dispose();
 
-        PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
+        PluginInterface.UiBuilder.Draw -= DrawThemed;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleConfigUi;
 
@@ -79,6 +89,19 @@ public sealed class Plugin : IDalamudPlugin
 
         _pinchDriver.Dispose();
         _mbListener.Dispose();
+    }
+
+    /// <summary>
+    /// One wrap point for the whole plugin: no window class knows the theme
+    /// exists, and the pop is guaranteed even if a window throws mid-draw —
+    /// ImGui's style stack is global, so an unbalanced push corrupts every
+    /// plugin drawing after this one.
+    /// </summary>
+    private void DrawThemed()
+    {
+        HubStyle.Push();
+        try { WindowSystem.Draw(); }
+        finally { HubStyle.Pop(); }
     }
 
     private void OnCommand(string command, string args) => ConfigWindow.Toggle();
