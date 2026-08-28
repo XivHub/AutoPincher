@@ -84,7 +84,14 @@ public sealed class PinchDriver : IDisposable
     private uint _lcItemId;
     private long _lcDeadlineMs;
     private const string MbThrottleName = "AutoPincherMBThrottle";
-    private const long LiveCompareTimeoutMs = 5000;
+    // How long to wait for a board response before re-firing. Measured over 203
+    // lookups: p50 0.54s, p99 0.90s, then nothing at all until a single 5.55s
+    // straggler. The band between is empty, so this abandons exactly one reply
+    // in two hundred whether it is three seconds or five, and three is still
+    // more than three times the p99. Re-firing early is what costs: the request
+    // is rate limited server-side and a throttled reply comes back silent,
+    // which is what a timeout looks like, so guessing low feeds itself.
+    private const long LiveCompareTimeoutMs = 3000;
     // Retry budget for the current live-compare item. The market board returns NO
     // offerings packet when rate-limited ("Please wait a short while and try
     // again") or when a request is dropped, which surfaces here as a deadline
