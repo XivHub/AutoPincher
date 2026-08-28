@@ -71,6 +71,15 @@ public sealed class PinchDriver : IDisposable
     // previous search would otherwise read as "this one is finished" before it
     // has begun. Missing the edge only falls back to the deadline below.
     private bool _lcSearchSeenActive;
+    // When the first packet of the current reply landed; 0 before any has.
+    private long _lcFirstPacketMs;
+    // How long after the first packet of a reply to keep waiting for more of it.
+    // The reply to one lookup arrives all at once — measured in the sibling
+    // repricer, an item with a competitor resolves 0.54s after the request and
+    // never later than 0.91s — so a further page half a second on is not coming.
+    // This bounds the wait without depending on the client's own in-flight flag,
+    // whose offset ClientStructs is not certain of.
+    private const long LiveCompareSettleMs = 500;
     /// <summary>The item the open window is selling; the vendor floor is per item.</summary>
     private uint _lcItemId;
     private long _lcDeadlineMs;
@@ -655,6 +664,7 @@ public sealed class PinchDriver : IDisposable
             _lcAwaiting = (name, hq);
             _lcRetries = 0;
             _lcSearchSeenActive = false;
+            _lcFirstPacketMs = 0;
             _lcDeadlineMs = now + LiveCompareTimeoutMs;
             _log.Debug("Pinch: live-compare requested for {Item} (hq={Hq})", name, hq);
             return false;
@@ -682,8 +692,15 @@ public sealed class PinchDriver : IDisposable
         // Without this the common case (an item nobody else is selling answers
         // with a history packet and no offerings packet at all) spends the whole
         // deadline on an answer already in memory.
-        if (SearchFinished() && (offeringsArrived || historyArrived))
+        bool anyArrived = offeringsArrived || historyArrived;
+        if (anyArrived && _lcFirstPacketMs == 0)
+            _lcFirstPacketMs = now;
+        if (anyArrived && (SearchFinished() || now >= _lcFirstPacketMs + LiveCompareSettleMs))
+        {
+            _log.Debug("Pinch: {Item} — nothing to undercut ({Why})", name,
+                SearchFinished() ? "search finished" : $"reply settled after {LiveCompareSettleMs}ms");
             return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
+        }
 
         if (now >= _lcDeadlineMs)
         {
@@ -703,6 +720,7 @@ public sealed class PinchDriver : IDisposable
                 _mb.BeginRequest(itemId, hq, _sessionOwnCids);
                 Callback.Fire(&addon->AtkUnitBase, true, 4); // Compare Prices
                 _lcSearchSeenActive = false;
+                _lcFirstPacketMs = 0;
                 _lcDeadlineMs = now + LiveCompareTimeoutMs;
                 _log.Information("Pinch: live-compare no response for {Item}; retry {N}/{Max}",
                     name, _lcRetries, LiveCompareMaxRetries);
@@ -738,6 +756,7 @@ public sealed class PinchDriver : IDisposable
         _lcAwaiting = null;
         _lcRetries = 0;
         _lcSearchSeenActive = false;
+        _lcFirstPacketMs = 0;
         ApplyCompareResult(addon, name, hq, curPrice, result);
         return true;
     }
