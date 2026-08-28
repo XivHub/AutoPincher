@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <AssemblyName>AutoPincher</AssemblyName>
     <RootNamespace>AutoPincher</RootNamespace>
     <PackageProjectUrl>https://github.com/XivHub/AutoPincher</PackageProjectUrl>
@@ -13,6 +13,9 @@
   </ItemGroup>
   <!-- Shared helpers compiled from source; see ~/dev/XivHubPluginKit/README.md -->
   <ItemGroup>
+    <Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Inventory\VendorPrice.cs" Link="Kit\Inventory\VendorPrice.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubColors.cs" Link="Kit\UI\HubColors.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubStyle.cs" Link="Kit\UI\HubStyle.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubThemeConfig.cs" Link="Kit\UI\HubThemeConfig.cs" />

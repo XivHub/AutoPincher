@@ -7,6 +7,7 @@ using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using ECommons;
+using ECommons.DalamudServices;
 using XivHubPluginKit.UI;
 using AutoPincher.Bridge;
 using AutoPincher.Windows;
@@ -42,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
 
         ECommonsMain.Init(PluginInterface, this);
+        XivHubPluginKit.KitServices.Init(Svc.Data, Log, ChatGui, "[autopincher]");
 
         ThemeConfig = new HubThemeConfigService(
             PluginInterface.GetPluginConfigDirectory(),

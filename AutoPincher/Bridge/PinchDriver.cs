@@ -16,6 +16,7 @@ using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using XivHubPluginKit.Inventory;
 
 namespace AutoPincher.Bridge;
 
@@ -70,6 +71,8 @@ public sealed class PinchDriver : IDisposable
     // previous search would otherwise read as "this one is finished" before it
     // has begun. Missing the edge only falls back to the deadline below.
     private bool _lcSearchSeenActive;
+    /// <summary>The item the open window is selling; the vendor floor is per item.</summary>
+    private uint _lcItemId;
     private long _lcDeadlineMs;
     private const string MbThrottleName = "AutoPincherMBThrottle";
     private const long LiveCompareTimeoutMs = 5000;
@@ -630,6 +633,7 @@ public sealed class PinchDriver : IDisposable
     private unsafe bool? LiveCompareStep(
         AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint itemId)
     {
+        _lcItemId = itemId;
         // Cached from a prior retainer this session? Apply immediately.
         if (_liveCompareCache.TryGetValue((itemId, hq), out var cached))
         {
@@ -760,6 +764,8 @@ public sealed class PinchDriver : IDisposable
             return;
         }
         uint target = result.Competitor > 1 ? result.Competitor - 1 : 1;
+        if (!Affordable(addon, name, hq, curPrice, target, $"competitor {result.Competitor:N0}"))
+            return;
         if (target == curPrice)
         {
             _log.Debug("Pinch: {Item} (hq={Hq}) — already at live undercut {Price}", name, hq, target);
@@ -771,6 +777,49 @@ public sealed class PinchDriver : IDisposable
         addon->AskingPrice->SetValue((int)target);
         Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
         _sessionReprices++;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="target"/> is a price worth asking, and if not,
+    /// deal with the listing here.
+    ///
+    /// A unit an NPC will buy, or that a shop will sell you another of, has a
+    /// worth the market cannot argue with. Undercutting past it is not a thin
+    /// margin, it is a loss you chose — and against a gil shop the other side
+    /// has unlimited stock, so the race has no bottom. The comparison is on the
+    /// gil that reaches you, since the board takes its cut first.
+    ///
+    /// Below the floor, the listing is left where it is rather than dropped to
+    /// the floor: the market is under water either way, so nothing sells at the
+    /// floor that would not have sold higher, and holding keeps the price for
+    /// when the cheap stock clears. A listing already under the floor is the one
+    /// case worth touching — that one is raised back to it.
+    /// </summary>
+    private unsafe bool Affordable(
+        AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint target, string why)
+    {
+        int floor = VendorPrice.Floor(_lcItemId);
+        if (floor <= 0 || target >= floor)
+            return true;
+
+        if (curPrice < floor)
+        {
+            _log.Information(
+                "Pinch: {Item} (hq={Hq}) {Old} -> {New} — {Why} is under what it is worth off the "
+                + "board ({Outside:N0} gil), so raising to that instead",
+                name, hq, curPrice, floor, why, VendorPrice.Outside(_lcItemId));
+            addon->AskingPrice->SetValue(floor);
+            Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
+            _sessionReprices++;
+            return false;
+        }
+
+        _log.Information(
+            "Pinch: {Item} (hq={Hq}) — {Why} would net less than the {Outside:N0} gil it is worth "
+            + "off the board; holding at {Price:N0}",
+            name, hq, why, VendorPrice.Outside(_lcItemId), curPrice);
+        Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel (no change)
+        return false;
     }
 
     // No live competitor for this item. Either skip it (PinchSkipIfNoCompetitor —
@@ -793,6 +842,8 @@ public sealed class PinchDriver : IDisposable
             Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel
             return;
         }
+        if (!Affordable(addon, name, hq, curPrice, historyPrice, "the last sale"))
+            return;
         if (historyPrice == curPrice)
         {
             _log.Debug("Pinch: {Item} (hq={Hq}) — already at last-sale price {Price}", name, hq, historyPrice);
