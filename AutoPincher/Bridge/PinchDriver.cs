@@ -14,6 +14,7 @@ using ECommons.UIHelpers.AddonMasterImplementations;
 using ECommons.UIHelpers.AtkReaderImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace AutoPincher.Bridge;
@@ -64,6 +65,11 @@ public sealed class PinchDriver : IDisposable
     // The (name, hq) we've fired a Compare request for and are polling on; null
     // when not mid-request. Deadline is wall-clock ms (Environment.TickCount64).
     private (string Name, bool Hq)? _lcAwaiting;
+    // Whether the client has been seen waiting on listings since the current
+    // request was fired. The rising edge is required: a flag left false by the
+    // previous search would otherwise read as "this one is finished" before it
+    // has begun. Missing the edge only falls back to the deadline below.
+    private bool _lcSearchSeenActive;
     private long _lcDeadlineMs;
     private const string MbThrottleName = "AutoPincherMBThrottle";
     private const long LiveCompareTimeoutMs = 5000;
@@ -644,6 +650,7 @@ public sealed class PinchDriver : IDisposable
             Callback.Fire(&addon->AtkUnitBase, true, 4);
             _lcAwaiting = (name, hq);
             _lcRetries = 0;
+            _lcSearchSeenActive = false;
             _lcDeadlineMs = now + LiveCompareTimeoutMs;
             _log.Debug("Pinch: live-compare requested for {Item} (hq={Hq})", name, hq);
             return false;
@@ -663,10 +670,17 @@ public sealed class PinchDriver : IDisposable
         if (boardEmpty)
             return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
 
-        // Listings exist but none of them is undercuttable so far (all ours, all
-        // mannequins) — or no offerings packet has arrived yet. Both wait out the
-        // deadline: offerings come in batches of ~10, so a competitor sitting
-        // behind our own cheap listings can still be in a later packet.
+        // Nothing to undercut so far: listings exist but they are all ours or on
+        // mannequins, or no offerings packet has arrived yet. Offerings come in
+        // batches of ~10, so a competitor sitting behind our own cheap listings
+        // can still be in a later packet — but the client publishes when it has
+        // stopped waiting for them, and past that point no packet is coming.
+        // Without this the common case (an item nobody else is selling answers
+        // with a history packet and no offerings packet at all) spends the whole
+        // deadline on an answer already in memory.
+        if (SearchFinished() && (offeringsArrived || historyArrived))
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
+
         if (now >= _lcDeadlineMs)
         {
             // Something came back, just nothing to undercut. Treat it as "no
@@ -684,6 +698,7 @@ public sealed class PinchDriver : IDisposable
                 _lcRetries++;
                 _mb.BeginRequest(itemId, hq, _sessionOwnCids);
                 Callback.Fire(&addon->AtkUnitBase, true, 4); // Compare Prices
+                _lcSearchSeenActive = false;
                 _lcDeadlineMs = now + LiveCompareTimeoutMs;
                 _log.Information("Pinch: live-compare no response for {Item}; retry {N}/{Max}",
                     name, _lcRetries, LiveCompareMaxRetries);
@@ -696,6 +711,21 @@ public sealed class PinchDriver : IDisposable
         return false; // keep waiting
     }
 
+    // Whether the search we fired has finished: seen in flight, and no longer.
+    // Past that point no further offerings page is coming, so an item with no
+    // undercuttable listing is answered from history rather than waited out.
+    private unsafe bool SearchFinished()
+    {
+        var proxy = InfoProxyItemSearch.Instance();
+        if (proxy is null) return false;
+        if (proxy->WaitingForListings)
+        {
+            _lcSearchSeenActive = true;
+            return false;
+        }
+        return _lcSearchSeenActive;
+    }
+
     // Cache the resolved compare result, clear the await/retry state, and apply it.
     private unsafe bool? Resolve(
         AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint itemId, CompareResult result)
@@ -703,6 +733,7 @@ public sealed class PinchDriver : IDisposable
         _liveCompareCache[(itemId, hq)] = result;
         _lcAwaiting = null;
         _lcRetries = 0;
+        _lcSearchSeenActive = false;
         ApplyCompareResult(addon, name, hq, curPrice, result);
         return true;
     }
