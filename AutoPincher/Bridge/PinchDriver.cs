@@ -689,10 +689,38 @@ public sealed class PinchDriver : IDisposable
         uint? competitor = _mb.TryGetCheapestCompetitor(out bool offeringsArrived, out bool boardEmpty);
         uint? history = _mb.TryGetHistory(out bool historyArrived);
 
+        // The game keeps the assembled board in InfoProxyItemSearch, and the
+        // packets above are the pages it writes there: Dalamud raises
+        // OfferingsReceived from a hook on InfoProxyItemSearch::AddPage. Reading
+        // the proxy is therefore the same evidence one step later, after the
+        // client has collated it, and it answers two things the packets cannot.
+        // It carries SearchItemId, so a reply can be attributed to the item we
+        // asked about; and ListingCount distinguishes a board with nothing on it
+        // from a reply that has not started.
+        //
+        // Read it only once a page for THIS request has landed: the proxy holds
+        // the last search until the next one overwrites it, so before that it can
+        // still be holding this same item from an earlier session at prices that
+        // have since moved.
+        BoardView board = offeringsArrived ? ReadBoard(itemId, hq) : default;
+        if (board.Valid && board.Competitor is not null)
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(board.Competitor.Value, history ?? 0u));
+
+        // Nobody is selling this, said by the client's own count rather than
+        // inferred from a packet that carried no item id.
+        if (board.Valid && board.Rows == 0)
+            return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
+
         // A live competitor exists — resolve immediately and undercut. Offerings
         // arrive price-ascending, so the first one we accept is the cheapest.
+        // This answers when the proxy cannot be read at all, which is what a game
+        // patch moving the struct looks like.
         if (competitor is not null)
+        {
+            if (!board.Valid)
+                _log.Debug("Pinch: {Item} — priced from packets; the search proxy did not match", name);
             return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(competitor.Value, history ?? 0u));
+        }
 
         // An empty offerings packet arrived (explicit "nothing listed"): no live
         // competitor, resolve now using the history fallback.
@@ -716,7 +744,8 @@ public sealed class PinchDriver : IDisposable
         }
         if (anyArrived && (SearchFinished() || now >= _lcLastPacketMs + LiveCompareSettleMs))
         {
-            _log.Debug("Pinch: {Item} — nothing to undercut after {Pages} page(s) ({Why})", name, packets,
+            _log.Debug("Pinch: {Item} — nothing to undercut after {Pages} page(s), {Rows} listing(s) ({Why})",
+                name, packets, board.Valid ? board.Rows : -1,
                 SearchFinished() ? "search finished" : $"no further page for {LiveCompareSettleMs}ms");
             return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
         }
@@ -756,6 +785,50 @@ public sealed class PinchDriver : IDisposable
     // Whether the search we fired has finished: seen in flight, and no longer.
     // Past that point no further offerings page is coming, so an item with no
     // undercuttable listing is answered from history rather than waited out.
+    /// <summary>
+    /// What the client's own copy of the board holds for one item.
+    /// <paramref name="Valid"/> is false when the proxy is unreadable or is
+    /// holding a different item, in which case the other fields mean nothing.
+    /// <paramref name="Rows"/> counts every listing for the item, before the
+    /// competitor filter, so zero means an empty board rather than a board of
+    /// our own stock.
+    /// </summary>
+    private readonly record struct BoardView(bool Valid, int Rows, uint? Competitor);
+
+    /// <summary>
+    /// Read the cheapest listing we may undercut straight out of
+    /// <c>InfoProxyItemSearch</c>, the array the Compare Prices window renders.
+    ///
+    /// Same exclusions as the packet path: our own retainers are not competitors,
+    /// so two retainers holding one item settle on a price instead of racing each
+    /// other down; mannequins are display stock; and an HQ listing is only
+    /// comparable to an HQ sale.
+    /// </summary>
+    private unsafe BoardView ReadBoard(uint itemId, bool hq)
+    {
+        var proxy = InfoProxyItemSearch.Instance();
+        if (proxy is null || proxy->SearchItemId != itemId)
+            return new BoardView(false, 0, null);
+
+        var listings = proxy->Listings;
+        int count = (int)Math.Min(proxy->ListingCount, (uint)listings.Length);
+        int rows = 0;
+        uint? best = null;
+
+        for (int i = 0; i < count; i++)
+        {
+            ref var l = ref listings[i];
+            if (l.ItemId != itemId) continue;
+            rows++;
+            if (hq && !l.IsHqItem) continue;
+            if (l.IsMannequin) continue;
+            if (_sessionOwnCids.Contains(l.RetainerId)) continue;
+            if (best is null || l.UnitPrice < best) best = l.UnitPrice;
+        }
+
+        return new BoardView(true, rows, best);
+    }
+
     private unsafe bool SearchFinished()
     {
         var proxy = InfoProxyItemSearch.Instance();
