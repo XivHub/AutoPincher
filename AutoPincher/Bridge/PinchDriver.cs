@@ -269,6 +269,15 @@ public sealed class PinchDriver : IDisposable
 
             foreach (var (cid, name, sortedIdx, marketCount) in snapshot)
             {
+                // Leaving the bell by hand — Esc out and walk off — is not a
+                // cancel, so without this every remaining retainer would spend
+                // its step budget clicking at a list that is gone.
+                if (!await Svc.Framework.RunOnFrameworkThread(IsRetainerListReady))
+                {
+                    _log.Information("Pinch session: the retainer list is gone; stopping");
+                    break;
+                }
+
                 if (_cts.Token.IsCancellationRequested) break;
 
                 // Skip retainers with nothing listed without opening them.
@@ -422,7 +431,7 @@ public sealed class PinchDriver : IDisposable
                 continue;
             }
             liveCompare[(name, row.Hq)] = row.ItemId;
-            intended++;
+            if (LiveRowNeedsVisit(row, name)) intended++;
         }
 
         // Budget in rows (== intended), not distinct map entries: two stacks of
@@ -637,7 +646,11 @@ public sealed class PinchDriver : IDisposable
             bool? r = LiveCompareStep(addon, name, hq, curPrice, itemId);
             // Decrement the early-exit budget once, when the compare finishes
             // (terminal true), not on the false retries while waiting.
-            if (r == true && _rowsRemaining != int.MaxValue) _rowsRemaining--;
+            // The budget is spent in ApplyCompareResult, on a real write only.
+            // A finished compare that changed nothing must not consume it, or a
+            // row that does need a change is short-circuited before it is
+            // reached — the sell list is in the game's category order, so there
+            // is no saying which rows come first.
             return r;
         }
 
@@ -863,111 +876,122 @@ public sealed class PinchDriver : IDisposable
     //                      each other down a gil per pass.
     //   Competitor == 0 -> nobody to undercut: either skip (config) or fall back
     //                      to the history window's most recent sale price.
-    private unsafe void ApplyCompareResult(
-        AddonRetainerSell* addon, string name, bool hq, uint curPrice, CompareResult result)
-    {
-        // Compare Prices opened ItemSearchResult on top of RetainerSell; close it
-        // before we confirm/cancel so it doesn't stack across items.
-        if (GenericHelpers.TryGetAddonByName<AtkUnitBase>("ItemSearchResult", out var isr) && isr->IsVisible)
-            isr->Close(true);
-
-        if (result.Competitor == 0)
-        {
-            ApplyNoCompetitor(addon, name, hq, curPrice, result.HistoryPrice);
-            return;
-        }
-        uint target = result.Competitor > 1 ? result.Competitor - 1 : 1;
-        if (!Affordable(addon, name, hq, curPrice, target, $"competitor {result.Competitor:N0}"))
-            return;
-        if (target == curPrice)
-        {
-            _log.Debug("Pinch: {Item} (hq={Hq}) — already at live undercut {Price}", name, hq, target);
-            Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel (no change)
-            return;
-        }
-        _log.Information("Pinch: live-undercut {Item} (hq={Hq}) {Old} -> {New} (competitor {Comp})",
-            name, hq, curPrice, target, result.Competitor);
-        addon->AskingPrice->SetValue((int)target);
-        Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
-        _sessionReprices++;
-    }
+    /// <summary>
+    /// What the run would do to one listing: the price to write, or null to
+    /// leave it where it is, plus the phrase that explains the choice.
+    ///
+    /// Pure on purpose. The same call decides a write with the sell window open
+    /// and decides whether a row is worth opening at all, so the two can never
+    /// disagree about which listings still need work.
+    /// </summary>
+    private readonly record struct PriceDecision(uint? Write, string Why);
 
     /// <summary>
-    /// Whether <paramref name="target"/> is a price worth asking, and if not,
-    /// deal with the listing here.
+    /// Price one listing against what the board said.
+    ///
+    /// With a competitor, take the highest price still under the cheapest one.
+    /// Our own retainers and mannequins were never in that number, so two
+    /// retainers holding the same item land on the same price instead of racing
+    /// each other down a gil per pass. With nobody to undercut, either leave it
+    /// for a manual raise (config) or match the most recent sale.
     ///
     /// A unit an NPC will buy, or that a shop will sell you another of, has a
     /// worth the market cannot argue with. Undercutting past it is not a thin
-    /// margin, it is a loss you chose — and against a gil shop the other side
-    /// has unlimited stock, so the race has no bottom. The comparison is on the
-    /// gil that reaches you, since the board takes its cut first.
-    ///
-    /// Below the floor, the listing is left where it is rather than dropped to
-    /// the floor: the market is under water either way, so nothing sells at the
-    /// floor that would not have sold higher, and holding keeps the price for
-    /// when the cheap stock clears. A listing already under the floor is the one
-    /// case worth touching — that one is raised back to it.
+    /// margin, it is a loss you chose, and against a gil shop the other side has
+    /// unlimited stock, so the race has no bottom. Below that floor the listing
+    /// is held rather than dropped to it: the market is under water either way,
+    /// so nothing sells at the floor that would not have sold higher, and
+    /// holding keeps the price for when the cheap stock clears. A listing
+    /// already under the floor is raised back to it, the one case worth
+    /// touching. The comparison is on the gil that reaches you, since the board
+    /// takes its cut first.
     /// </summary>
-    private unsafe bool Affordable(
-        AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint target, string why)
+    private static PriceDecision Decide(CompareResult result, uint curPrice, uint itemId)
     {
-        int floor = VendorPrice.Floor(_lcItemId);
-        if (floor <= 0 || target >= floor)
-            return true;
+        uint target;
+        string why;
 
-        if (curPrice < floor)
+        if (result.Competitor > 0)
         {
-            _log.Information(
-                "Pinch: {Item} (hq={Hq}) {Old} -> {New} — {Why} is under what it is worth off the "
-                + "board ({Outside:N0} gil), so raising to that instead",
-                name, hq, curPrice, floor, why, VendorPrice.Outside(_lcItemId));
-            addon->AskingPrice->SetValue(floor);
-            Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
-            _sessionReprices++;
-            return false;
+            target = result.Competitor > 1 ? result.Competitor - 1 : 1;
+            why = $"undercutting {result.Competitor:N0}";
+        }
+        else if (Plugin.Configuration.PinchSkipIfNoCompetitor)
+        {
+            return new PriceDecision(null, "no live competitor; left as a raise-price opportunity");
+        }
+        else if (result.HistoryPrice == 0)
+        {
+            return new PriceDecision(null, "no live competitor and no sale history");
+        }
+        else
+        {
+            target = result.HistoryPrice;
+            why = "last sale; nobody else selling";
         }
 
-        _log.Information(
-            "Pinch: {Item} (hq={Hq}) — {Why} would net less than the {Outside:N0} gil it is worth "
-            + "off the board; holding at {Price:N0}",
-            name, hq, why, VendorPrice.Outside(_lcItemId), curPrice);
-        Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel (no change)
-        return false;
+        int floor = VendorPrice.Floor(itemId);
+        if (floor > 0 && target < floor)
+        {
+            long outside = VendorPrice.Outside(itemId);
+            return curPrice < floor
+                ? new PriceDecision((uint)floor, $"was under the {outside:N0} a vendor gives")
+                : new PriceDecision(null, $"held; {why} nets less than the {outside:N0} a vendor gives");
+        }
+
+        return target == curPrice
+            ? new PriceDecision(null, "already at target")
+            : new PriceDecision(target, why);
     }
 
-    // No live competitor for this item. Either skip it (PinchSkipIfNoCompetitor —
-    // being the only seller is a chance to raise the price by hand) or match the
-    // most recent sale from the history window. Always advances; never blocks.
-    private unsafe void ApplyNoCompetitor(
-        AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint historyPrice)
+    // Write the decided price into the open sell window, or cancel out of it.
+    private unsafe void ApplyCompareResult(
+        AddonRetainerSell* addon, string name, bool hq, uint curPrice, CompareResult result)
     {
-        if (Plugin.Configuration.PinchSkipIfNoCompetitor)
+        PriceDecision d = Decide(result, curPrice, _lcItemId);
+
+        if (d.Write is null)
         {
-            _log.Information("Pinch: {Item} (hq={Hq}) — no live competitor; skipping (raise-price opportunity)",
-                name, hq);
-            Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel
-            return;
-        }
-        if (historyPrice == 0)
-        {
-            _log.Information("Pinch: {Item} (hq={Hq}) — no live competitor and no sale history; leaving unchanged",
-                name, hq);
-            Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel
-            return;
-        }
-        if (!Affordable(addon, name, hq, curPrice, historyPrice, "the last sale"))
-            return;
-        if (historyPrice == curPrice)
-        {
-            _log.Debug("Pinch: {Item} (hq={Hq}) — already at last-sale price {Price}", name, hq, historyPrice);
+            _log.Information("Pinch: {Item} (hq={Hq}) — {Why}; holding at {Price:N0}",
+                name, hq, d.Why, curPrice);
             Callback.Fire(&addon->AtkUnitBase, true, 1); // cancel (no change)
             return;
         }
-        _log.Information("Pinch: history-priced {Item} (hq={Hq}) {Old} -> {New} (last sale, no live competitor)",
-            name, hq, curPrice, historyPrice);
-        addon->AskingPrice->SetValue((int)historyPrice);
-        Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
+
+        uint target = d.Write.Value;
+        _log.Information("Pinch: {Item} (hq={Hq}) {Old} -> {New} ({Why})",
+            name, hq, curPrice, target, d.Why);
         _sessionReprices++;
+        addon->AskingPrice->SetValue((int)target);
+        Callback.Fire(&addon->AtkUnitBase, true, 0); // confirm
+        if (_rowsRemaining != int.MaxValue) _rowsRemaining--;
+    }
+
+    /// <summary>
+    /// Whether a live-priced row still has to have its window opened.
+    ///
+    /// The board is asked once per item per session, so the second retainer
+    /// holding a stack already knows the answer. Feeding that answer and the
+    /// row's current price to the same <see cref="Decide"/> the write path uses
+    /// says whether anything would change, and a row where nothing would is one
+    /// the run can leave shut. An item the board has not been asked about yet
+    /// has to be visited, because opening the window is how it gets asked.
+    ///
+    /// This only sets the size of the early-exit budget, which is spent on
+    /// whichever rows turn out to need work: the visual order of the sell list
+    /// is the game's, not ours, so nothing here decides which row is skipped.
+    /// </summary>
+    private bool LiveRowNeedsVisit(RetainerMarketRow row, string label)
+    {
+        if (!_liveCompareCache.TryGetValue((row.ItemId, row.Hq), out CompareResult cached))
+            return true;
+
+        if (Decide(cached, row.Price, row.ItemId).Write is not null)
+            return true;
+
+        _log.Debug("Pinch: {Item} (hq={Hq}) — already at {Price:N0} from this run's board read; no window needed",
+            label, row.Hq, row.Price);
+        return false;
     }
 
     // Item display name from the Item sheet (empty on failure).
