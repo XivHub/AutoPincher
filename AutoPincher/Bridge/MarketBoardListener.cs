@@ -38,6 +38,11 @@ public sealed class MarketBoardListener : IDisposable
     // came back with no listings at all.
     private bool _offeringsArrived;
     private bool _boardEmpty;
+    // How many offerings packets for the awaited item have been folded in. The
+    // caller watches this to tell "the reply has gone quiet" from "the reply has
+    // not started", because offerings arrive ten to a packet and the cheapest
+    // competitor can sit on any of them.
+    private int _offeringsPackets;
     // History-window fallback: the most recent sale's unit price (HQ-matched) and
     // whether a history packet for the awaited item has arrived at all. The game
     // answers a "Compare Prices" lookup with BOTH an offerings packet and a
@@ -70,6 +75,7 @@ public sealed class MarketBoardListener : IDisposable
             _cheapestCompetitor = null;
             _offeringsArrived = false;
             _boardEmpty = false;
+            _offeringsPackets = 0;
             _mostRecentSale = null;
             _historyArrived = false;
         }
@@ -91,6 +97,16 @@ public sealed class MarketBoardListener : IDisposable
             boardEmpty = _boardEmpty;
             return _cheapestCompetitor;
         }
+    }
+
+    /// <summary>
+    /// Offerings packets folded in for the awaited item since <see cref="BeginRequest"/>.
+    /// Rises once per page, so a caller can restart its own settle window each
+    /// time the reply grows.
+    /// </summary>
+    public int OfferingsPackets
+    {
+        get { lock (_gate) return _offeringsPackets; }
     }
 
     /// <summary>
@@ -130,6 +146,11 @@ public sealed class MarketBoardListener : IDisposable
                 lock (_gate)
                 {
                     if (_awaitingItemId != awaitId) return;
+                    // An empty packet carries no item id, so it cannot be
+                    // attributed. Honour it only before any page for this item
+                    // has arrived; past that it is someone else's search, or a
+                    // terminator, and the pages already folded in are the truth.
+                    if (_offeringsPackets > 0) return;
                     _offeringsArrived = true;
                     _boardEmpty = true;
                 }
@@ -159,6 +180,8 @@ public sealed class MarketBoardListener : IDisposable
                 // is accepted: harmless, since it's the same item's current price.
                 if (_awaitingItemId != awaitId) return; // a new request superseded us
                 _offeringsArrived = true;
+                _boardEmpty = false;
+                _offeringsPackets++;
                 if (best is not null && (_cheapestCompetitor is null || best < _cheapestCompetitor))
                     _cheapestCompetitor = best;
             }
