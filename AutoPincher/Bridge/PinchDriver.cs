@@ -303,8 +303,7 @@ public sealed class PinchDriver : IDisposable
                 if (rows.Count == 0)
                 {
                     _chat.Print($"[autopincher] Skip {name}: no listings");
-                    _tasks.Enqueue(CloseRetainerSellList);
-                    _tasks.Enqueue(CloseSelectStringBack);
+                    EnqueueLeaveRetainer();
                     await DrainTasks();
                     continue;
                 }
@@ -313,8 +312,7 @@ public sealed class PinchDriver : IDisposable
                 // Actual writes are counted by ApplyCompareResult into _sessionReprices;
                 // the out-param here is the planned candidate count, unused per-retainer.
                 EnqueuePinchTasks(rows, closeOuterList: false, out _);
-                _tasks.Enqueue(CloseRetainerSellList);
-                _tasks.Enqueue(CloseSelectStringBack);
+                EnqueueLeaveRetainer();
                 await DrainTasks();
 
                 _sessionRetainersProcessed++;
@@ -501,6 +499,22 @@ public sealed class PinchDriver : IDisposable
         l->Close(true);
         return false;
     }
+
+    // Close back out to the retainer list: shut the sell window, click Quit on
+    // the menu, then wait for RetainerList to come back. Clicking Quit only
+    // starts the exit; the list reappears a second or two later. The wait keeps
+    // the caller from sampling a UI mid-transition and reading it as the player
+    // having walked away from the bell. A timeout is deliberately not an abort —
+    // the caller's own check decides what it means.
+    private void EnqueueLeaveRetainer()
+    {
+        _tasks.Enqueue(CloseRetainerSellList);
+        _tasks.Enqueue(CloseSelectStringBack);
+        _tasks.Enqueue(() => WaitForAddon("RetainerList"), RetainerListReturnMs, false);
+    }
+
+    // How long the game may take to put RetainerList back after Quit.
+    private const int RetainerListReturnMs = 10000;
 
     // Click the localised "Quit" entry on the retainer SelectString. Mirror of
     // AR's SelectQuit (Excel Addon row 2383 so this works in every client
