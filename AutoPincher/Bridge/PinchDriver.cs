@@ -14,7 +14,6 @@ using ECommons.UIHelpers.AddonMasterImplementations;
 using ECommons.UIHelpers.AtkReaderImplementations;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.UI;
-using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using XivHubPluginKit.Inventory;
 
@@ -66,11 +65,6 @@ public sealed class PinchDriver : IDisposable
     // The (name, hq) we've fired a Compare request for and are polling on; null
     // when not mid-request. Deadline is wall-clock ms (Environment.TickCount64).
     private (string Name, bool Hq)? _lcAwaiting;
-    // Whether the client has been seen waiting on listings since the current
-    // request was fired. The rising edge is required: a flag left false by the
-    // previous search would otherwise read as "this one is finished" before it
-    // has begun. Missing the edge only falls back to the deadline below.
-    private bool _lcSearchSeenActive;
     // When the most recent packet of the current reply landed; 0 before any has.
     private long _lcLastPacketMs;
     // Offerings pages folded in when the settle window was last restarted.
@@ -704,7 +698,6 @@ public sealed class PinchDriver : IDisposable
             Callback.Fire(&addon->AtkUnitBase, true, 4);
             _lcAwaiting = (name, hq);
             _lcRetries = 0;
-            _lcSearchSeenActive = false;
             _lcLastPacketMs = 0;
             _lcSeenPackets = 0;
             _lcDeadlineMs = now + LiveCompareTimeoutMs;
@@ -747,11 +740,10 @@ public sealed class PinchDriver : IDisposable
             _lcLastPacketMs = now;
             _lcSeenPackets = packets;
         }
-        if (anyArrived && (SearchFinished() || now >= _lcLastPacketMs + LiveCompareSettleMs))
+        if (anyArrived && now >= _lcLastPacketMs + LiveCompareSettleMs)
         {
-            _log.Debug("Pinch: {Item} — nothing to undercut after {Pages} page(s) ({Why})",
-                name, packets,
-                SearchFinished() ? "search finished" : $"no further page for {LiveCompareSettleMs}ms");
+            _log.Debug("Pinch: {Item} — nothing to undercut after {Pages} page(s); no further page for {Settle}ms",
+                name, packets, LiveCompareSettleMs);
             return Resolve(addon, name, hq, curPrice, itemId, new CompareResult(0u, history ?? 0u));
         }
 
@@ -772,8 +764,7 @@ public sealed class PinchDriver : IDisposable
                 _lcRetries++;
                 _mb.BeginRequest(itemId, hq, _sessionOwnCids);
                 Callback.Fire(&addon->AtkUnitBase, true, 4); // Compare Prices
-                _lcSearchSeenActive = false;
-                _lcLastPacketMs = 0;
+                    _lcLastPacketMs = 0;
                 _lcSeenPackets = 0;
                 _lcDeadlineMs = now + LiveCompareTimeoutMs;
                 _log.Information("Pinch: live-compare no response for {Item}; retry {N}/{Max}",
@@ -787,21 +778,6 @@ public sealed class PinchDriver : IDisposable
         return false; // keep waiting
     }
 
-    // Whether the search we fired has finished: seen in flight, and no longer.
-    // Past that point no further offerings page is coming, so an item with no
-    // undercuttable listing is answered from history rather than waited out.
-    private unsafe bool SearchFinished()
-    {
-        var proxy = InfoProxyItemSearch.Instance();
-        if (proxy is null) return false;
-        if (proxy->WaitingForListings)
-        {
-            _lcSearchSeenActive = true;
-            return false;
-        }
-        return _lcSearchSeenActive;
-    }
-
     // Cache the resolved compare result, clear the await/retry state, and apply it.
     private unsafe bool? Resolve(
         AddonRetainerSell* addon, string name, bool hq, uint curPrice, uint itemId, CompareResult result)
@@ -809,7 +785,6 @@ public sealed class PinchDriver : IDisposable
         _liveCompareCache[(itemId, hq)] = result;
         _lcAwaiting = null;
         _lcRetries = 0;
-        _lcSearchSeenActive = false;
         _lcLastPacketMs = 0;
         _lcSeenPackets = 0;
         ApplyCompareResult(addon, name, hq, curPrice, result);
