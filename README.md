@@ -3,16 +3,26 @@
 A lightweight, fully-local Dalamud plugin that undercuts your FFXIV retainer
 market listings. It reads each listing straight from game memory, uses the
 in-game market board's **Compare Prices** to find the current cheapest
-competitor, and sets your asking price to **1 gil below it**. Your own
-retainers and housing mannequins are never competitors, so two retainers
-selling the same item land on the same price instead of chasing each other
-down; with nobody to undercut the listing is skipped or priced from sale
-history.
+competitor, and sets your asking price to **1 gil below it**.
 
-No server, no telemetry, no Universalis upload — nothing leaves your client.
-This is the pinch engine from
-[FFMarketConnector](https://github.com/edg-l/FFMarketConnector) extracted into a
-standalone plugin with all the data-streaming stripped out.
+- Your own retainers and housing mannequins are never competitors. A listing
+  never sits above your own cheapest copy of the item, so two retainers
+  selling the same thing land on the same price instead of chasing each other
+  down.
+- With nobody else selling, the listing is raised to the last sale price,
+  never cut. Turn on *Skip when no live competitor* to leave those for you to
+  price by hand.
+- If the board does not answer in time, the listing keeps its current price.
+- A listing never goes below its vendor floor: the lowest asking price that
+  still clears what a vendor pays or charges after the 5% market tax. Below
+  that the listing holds, and one already under it is raised back.
+
+No server, and nothing leaves your client unless you turn on the developer log
+(see Usage), which sends log lines only to a URL you set. This is the pinch
+engine from
+[FFMarketConnector](https://github.com/edg-l/FFMarketConnector), shared through
+[XivHubPluginKit](https://github.com/XivHub/XivHubPluginKit), without the data
+streaming.
 
 ## Usage
 
@@ -23,6 +33,9 @@ standalone plugin with all the data-streaming stripped out.
   *Pinch open retainer now* button in the config window).
 - **Config:** `/autopincher` opens the window — toggle the plugin, and tune the
   per-item delay and the market-board request delay.
+- **Developer:** an opt-in log mirror for debugging. Tick *Send my log lines to
+  a local server* and save a URL such as `http://<host>:9999/log`; it stays
+  inert unless both are set.
 
 Do not touch the keyboard/mouse while a pinch session runs; it drives the game UI.
 
