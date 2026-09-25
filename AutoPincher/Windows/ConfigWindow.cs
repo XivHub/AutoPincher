@@ -12,12 +12,18 @@ namespace AutoPincher.Windows;
 public sealed class ConfigWindow : Window, IDisposable
 {
     private readonly PinchDriver _driver;
+    private string _devLogUrl = string.Empty;
 
     public ConfigWindow(PinchDriver driver) : base("AutoPincher###autopincher-config")
     {
         _driver = driver;
         Size = new Vector2(420, 0);
         SizeCondition = ImGuiCond.FirstUseEver;
+    }
+
+    public override void OnOpen()
+    {
+        _devLogUrl = Plugin.Configuration.DevLogUrl;
     }
 
     public override void Draw()
@@ -105,10 +111,41 @@ public sealed class ConfigWindow : Window, IDisposable
         if (!string.IsNullOrEmpty(last))
         {
             ImGui.Spacing();
-            ImGui.TextColored(HubStyle.Faint, $"Last run: {last}");
+            HubText.Colored(HubStyle.Faint, $"Last run: {last}");
         }
 
+        DrawDeveloperSection();
         DrawThemeSection();
+    }
+
+    /// <summary>Opt-in log mirror to a local dev-log server; inert unless both the toggle and the URL are set.</summary>
+    private void DrawDeveloperSection()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.Text("Developer");
+
+        var cfg = Plugin.Configuration;
+        bool on = cfg.DevLog;
+        if (ImGui.Checkbox("Send my log lines to a local server", ref on))
+        {
+            cfg.DevLog = on;
+            cfg.Save();
+        }
+        ImGui.SetNextItemWidth(360);
+        ImGui.InputTextWithHint("##devlogurl", "http://<host>:9999/log", ref _devLogUrl, 256);
+        ImGui.SameLine();
+        if (ImGui.Button("Save##devlogurl"))
+        {
+            cfg.DevLogUrl = _devLogUrl;
+            cfg.Save();
+        }
+        ImGui.SameLine();
+        HubText.Inline(
+            Plugin.Telemetry.Active ? HubStyle.Good : HubStyle.Faint,
+            Plugin.Telemetry.Active ? "active" : "off");
+        HubText.Colored(HubStyle.Faint, "Inert unless both are set.");
     }
 
     /// <summary>
@@ -121,7 +158,7 @@ public sealed class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
         ImGui.Text("Appearance");
-        ImGui.TextColored(HubStyle.Faint, "Shared with every XIV Hub plugin.");
+        HubText.Colored(HubStyle.Faint, "Shared with every XIV Hub plugin.");
         ImGui.Spacing();
         HubThemeEditor.Draw(Plugin.ThemeConfig);
     }

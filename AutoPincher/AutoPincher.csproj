@@ -14,11 +14,25 @@
   <!-- Shared helpers compiled from source; see ~/dev/XivHubPluginKit/README.md -->
   <ItemGroup>
     <Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
+    <Compile Include="..\..\XivHubPluginKit\DevTelemetry.cs" Link="Kit\DevTelemetry.cs" />
+    <Compile Include="..\..\XivHubPluginKit\TeeLog.cs" Link="Kit\TeeLog.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
     <Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" />
     <Compile Include="..\..\XivHubPluginKit\Inventory\VendorPrice.cs" Link="Kit\Inventory\VendorPrice.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Shop\TalkSkipper.cs" Link="Kit\Shop\TalkSkipper.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Board\BoardObservation.cs" Link="Kit\Board\BoardObservation.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Board\MarketBoardListener.cs" Link="Kit\Board\MarketBoardListener.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Board\LivePriceProbe.cs" Link="Kit\Board\LivePriceProbe.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Pinch\PinchModels.cs" Link="Kit\Pinch\PinchModels.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Pinch\PinchDecision.cs" Link="Kit\Pinch\PinchDecision.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Pinch\PinchPlanning.cs" Link="Kit\Pinch\PinchPlanning.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Pinch\PinchEngine.cs" Link="Kit\Pinch\PinchEngine.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubColors.cs" Link="Kit\UI\HubColors.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubStyle.cs" Link="Kit\UI\HubStyle.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubThemeConfig.cs" Link="Kit\UI\HubThemeConfig.cs" />
     <Compile Include="..\..\XivHubPluginKit\UI\HubThemeEditor.cs" Link="Kit\UI\HubThemeEditor.cs" />
+    <Compile Include="..\..\XivHubPluginKit\UI\HubText.cs" Link="Kit\UI\HubText.cs" />
   </ItemGroup>
 </Project>

@@ -36,5 +36,17 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public bool PinchSkipIfNoCompetitor { get; set; } = false;
 
+    /// <summary>
+    /// Mirror the plugin's own log lines to <see cref="DevLogUrl"/>. Off by
+    /// default and inert without a URL, so it costs a shipped build nothing.
+    /// </summary>
+    public bool DevLog { get; set; } = false;
+
+    /// <summary>
+    /// Where <see cref="DevLog"/> posts, e.g. <c>http://192.168.88.248:9999/log</c>.
+    /// Plain HTTP with no auth: a LAN address only.
+    /// </summary>
+    public string DevLogUrl { get; set; } = "";
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

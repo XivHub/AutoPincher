@@ -8,6 +8,7 @@ using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using ECommons;
 using ECommons.DalamudServices;
+using XivHubPluginKit.Board;
 using XivHubPluginKit.UI;
 using AutoPincher.Bridge;
 using AutoPincher.Windows;
@@ -21,6 +22,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IMarketBoard MarketBoard { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
 
     private const string CommandName = "/autopincher";
     private const string PinchCommandName = "/autopinch";
@@ -37,6 +39,10 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly MarketBoardListener _mbListener;
     private readonly PinchDriver _pinchDriver;
+    private readonly XivHubPluginKit.DevTelemetry _telemetry;
+
+    /// <summary>Live dev log; inert unless DevLog is on and DevLogUrl is set.</summary>
+    public static XivHubPluginKit.DevTelemetry Telemetry { get; private set; } = null!;
 
     public Plugin()
     {
@@ -45,13 +51,18 @@ public sealed class Plugin : IDalamudPlugin
         ECommonsMain.Init(PluginInterface, this);
         XivHubPluginKit.KitServices.Init(Svc.Data, Log, ChatGui, "[autopincher]");
 
+        _telemetry = new XivHubPluginKit.DevTelemetry(
+            "AutoPincher", () => Configuration.DevLog, () => Configuration.DevLogUrl);
+        Telemetry = _telemetry;
+        var devLog = new XivHubPluginKit.TeeLog(Log, _telemetry);
+
         ThemeConfig = new HubThemeConfigService(
             PluginInterface.GetPluginConfigDirectory(),
             (msg, ex) => Log.Warning(ex, msg));
         HubStyle.Init(ThemeConfig);
 
-        _mbListener = new MarketBoardListener(MarketBoard, Log);
-        _pinchDriver = new PinchDriver(Log, ChatGui, _mbListener);
+        _mbListener = new MarketBoardListener(MarketBoard, GameInterop, Log);
+        _pinchDriver = new PinchDriver(devLog, _mbListener);
 
         ConfigWindow = new ConfigWindow(_pinchDriver);
         _pinchOverlay = new PinchOverlay(_pinchDriver);
@@ -91,6 +102,8 @@ public sealed class Plugin : IDalamudPlugin
 
         _pinchDriver.Dispose();
         _mbListener.Dispose();
+        // Last: it flushes whatever the teardown above logged.
+        _telemetry.Dispose();
     }
 
     /// <summary>
