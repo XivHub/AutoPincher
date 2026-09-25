@@ -43,7 +43,7 @@ public class Configuration : IPluginConfiguration
     public bool DevLog { get; set; } = false;
 
     /// <summary>
-    /// Where <see cref="DevLog"/> posts, e.g. <c>http://192.168.88.248:9999/log</c>.
+    /// Where <see cref="DevLog"/> posts, e.g. <c>http://&lt;host&gt;:9999/log</c>.
     /// Plain HTTP with no auth: a LAN address only.
     /// </summary>
     public string DevLogUrl { get; set; } = "";

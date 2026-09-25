@@ -61,7 +61,7 @@ public sealed class Plugin : IDalamudPlugin
             (msg, ex) => Log.Warning(ex, msg));
         HubStyle.Init(ThemeConfig);
 
-        _mbListener = new MarketBoardListener(MarketBoard, GameInterop, Log);
+        _mbListener = new MarketBoardListener(MarketBoard, GameInterop, devLog);
         _pinchDriver = new PinchDriver(devLog, _mbListener);
 
         ConfigWindow = new ConfigWindow(_pinchDriver);
