@@ -18,6 +18,7 @@
     <Compile Include="..\..\XivHubPluginKit\TeeLog.cs" Link="Kit\TeeLog.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarketRow.cs" Link="Kit\Retainer\RetainerMarketRow.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
     <Compile Include="..\..\XivHubPluginKit\Inventory\ItemSheet.cs" Link="Kit\Inventory\ItemSheet.cs" />
     <Compile Include="..\..\XivHubPluginKit\Inventory\VendorPrice.cs" Link="Kit\Inventory\VendorPrice.cs" />
