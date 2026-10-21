@@ -16,7 +16,9 @@
     <Compile Include="..\..\XivHubPluginKit\KitServices.cs" Link="Kit\KitServices.cs" />
     <Compile Include="..\..\XivHubPluginKit\DevTelemetry.cs" Link="Kit\DevTelemetry.cs" />
     <Compile Include="..\..\XivHubPluginKit\TeeLog.cs" Link="Kit\TeeLog.cs" />
+    <Compile Include="..\..\XivHubPluginKit\LogTemplate.cs" Link="Kit\LogTemplate.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerWalk.cs" Link="Kit\Retainer\RetainerWalk.cs" />
+    <Compile Include="..\..\XivHubPluginKit\Retainer\MarketCounts.cs" Link="Kit\Retainer\MarketCounts.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarket.cs" Link="Kit\Retainer\RetainerMarket.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\RetainerMarketRow.cs" Link="Kit\Retainer\RetainerMarketRow.cs" />
     <Compile Include="..\..\XivHubPluginKit\Retainer\AutoRetainerSuppress.cs" Link="Kit\Retainer\AutoRetainerSuppress.cs" />
