@@ -1,62 +1,57 @@
 # AutoPincher
 
-A lightweight, fully-local Dalamud plugin that undercuts your FFXIV retainer
-market listings. It reads each listing straight from game memory, uses the
-in-game market board's **Compare Prices** to find the current cheapest
-competitor, and sets your asking price to **1 gil below it**.
+Reprices everything your retainers are selling to 1 gil under the cheapest other seller, in one
+click.
 
-- Your own retainers and housing mannequins are never competitors. A listing
-  never sits above your own cheapest copy of the item, so two retainers
-  selling the same thing land on the same price instead of chasing each other
-  down.
-- With nobody else selling, the listing is raised to the last sale price,
-  never cut. Turn on *Skip when no live competitor* to leave those for you to
-  price by hand.
-- If the board does not answer in time, the listing keeps its current price.
-- A listing never goes below its vendor floor: the lowest asking price that
-  still clears what a vendor pays or charges after the 5% market tax. Below
-  that the listing holds, and one already under it is raised back.
+> **Warning:** this drives the game's menus for you, which is automation under the FFXIV User
+> Agreement. Use it at your own risk.
 
-No server, and nothing leaves your client unless you turn on the developer log
-(see Usage), which sends log lines only to a URL you set. This is the pinch
-engine from
-[FFMarketConnector](https://github.com/edg-l/FFMarketConnector), shared through
-[XivHubPluginKit](https://github.com/XivHub/XivHubPluginKit), without the data
-streaming.
+## How it works
 
-## Usage
+For each listing, AutoPincher opens the market board's Compare Prices, finds the cheapest seller who
+isn't you, and sets your price 1 gil below.
 
-- **All retainers:** with AutoRetainer installed, an **Auto Pinch** button appears
-  next to its retainer-list controls. Open your retainer list (the bell) and click
-  it to walk every retainer with active listings.
-- **One retainer:** open a retainer's sell list and run `/autopinch` (or the
-  *Pinch open retainer now* button in the config window).
-- **Config:** `/autopincher` opens the window — toggle the plugin, and tune the
-  per-item delay and the market-board request delay.
-- **Developer:** an opt-in log mirror for debugging. Tick *Send my log lines to
-  a local server* and save a URL such as `http://<host>:9999/log`; it stays
-  inert unless both are set.
+It follows a few rules so you don't lose money:
 
-Do not touch the keyboard/mouse while a pinch session runs; it drives the game UI.
+- Your other retainers and housing mannequins don't count as competitors, so your own listings
+  never undercut each other.
+- With nobody else selling, the price goes up to the last sale price instead of down. You can tell
+  it to skip those instead.
+- It never prices below what a vendor would pay you.
+- If the market board doesn't answer in time, the price stays as it was.
 
-## Dependencies
+Everything runs on your PC. Nothing is sent anywhere unless you turn on the developer log in
+settings and give it your own address.
 
-- **ECommons** (UI automation, throttling, IPC).
-- **AutoRetainer** — *optional*. Used only for the inline Auto Pinch button and to
-  pause AR's own automation during a run. The plugin works without it via
-  `/autopinch`.
+## How to use it
 
-## Build / deploy
+- All retainers: with AutoRetainer installed, open your retainer list at a bell and press the
+  Auto Pinch button next to it.
+- One retainer: open its sell list and type `/autopinch`.
 
-```bash
-DALAMUD_HOME=~/.cache/dalamud-dev DOTNET_ROOT=~/.dotnet \
-  dotnet build AutoPincher/AutoPincher.csproj -c Release -p:Platform=x64
-./publish.sh   # builds Release and merges into the combined XivHub plugin repo
+Leave the keyboard and mouse alone while it runs, since it is clicking through the game's menus.
+
+AutoRetainer is optional. If you have it, its own automation pauses while AutoPincher runs.
+
+## Install
+
+In `/xlsettings`, under Experimental, add this to Custom Plugin Repositories:
+
+```
+https://plugins.xivhub.net/pluginmaster.json
 ```
 
-Bump `<Version>` in `AutoPincher/AutoPincher.csproj` before every publish.
+Then install AutoPincher from the plugin installer.
 
-## Disclaimer
+## Commands
 
-Automates gameplay actions, which is against the FFXIV Terms of Service. Use at
-your own risk.
+| Command | What it does |
+|---|---|
+| `/autopinch` | Reprice the retainer whose sell list is open |
+| `/autopincher` | Open settings: turn it on or off and adjust the delays |
+
+AutoPincher's pricing comes from
+[FFMarketConnector](https://github.com/edg-l/FFMarketConnector), shared through
+[XivHubPluginKit](https://github.com/XivHub/XivHubPluginKit).
+
+Building from source: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
