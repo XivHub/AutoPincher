@@ -55,3 +55,7 @@ AutoPincher's pricing comes from
 [XivHubPluginKit](https://github.com/XivHub/XivHubPluginKit).
 
 Building from source: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## License
+
+AGPL-3.0-or-later. See `LICENSE`.
