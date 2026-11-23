@@ -19,6 +19,8 @@ It follows a few rules so you don't lose money:
   it to skip those instead.
 - It never prices below what a vendor would pay you.
 - If the market board doesn't answer in time, the price stays as it was.
+- A listing priced more than 10 times the cheapest seller is treated as a gil transfer and left
+  alone. You can turn this off in settings.
 
 Everything runs on your PC. Nothing is sent anywhere unless you turn on the developer log in
 settings and give it your own address.
