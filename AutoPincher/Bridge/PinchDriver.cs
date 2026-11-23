@@ -30,7 +30,8 @@ public sealed class PinchDriver : IDisposable
                 Plugin.Configuration.PinchPerItemDelayMs,
                 Plugin.Configuration.PinchMarketBoardDelayMs,
                 Plugin.Configuration.PinchSkipIfNoCompetitor,
-                false),
+                false,
+                Plugin.Configuration.PinchProtectGilTransfers),
             profitFloor: VendorPrice.Floor);
     }
 

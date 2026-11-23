@@ -78,6 +78,18 @@ public sealed class ConfigWindow : Window, IDisposable
                 "  off (default) — match the most recent sale from the history window.\n" +
                 "  on            — leave the price unchanged (chance to raise it by hand).");
 
+        bool protectTransfers = cfg.PinchProtectGilTransfers;
+        if (ImGui.Checkbox("Leave gil transfer listings alone", ref protectTransfers))
+        {
+            cfg.PinchProtectGilTransfers = protectTransfers;
+            cfg.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(
+                $"A listing priced over {XivHubPluginKit.Pinch.PinchDecision.TransferPriceRatio}x the cheapest seller is usually a gil transfer.\n" +
+                "  on (default) — leave it at its price.\n" +
+                "  off          — undercut it like any other listing.");
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

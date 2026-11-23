@@ -37,6 +37,13 @@ public class Configuration : IPluginConfiguration
     public bool PinchSkipIfNoCompetitor { get; set; } = false;
 
     /// <summary>
+    /// Leave a listing priced more than <see cref="XivHubPluginKit.Pinch.PinchDecision.TransferPriceRatio"/>
+    /// times the cheapest competitor alone, since that price is usually a gil transfer between
+    /// characters. True for configs saved before this setting existed, so their behaviour is unchanged.
+    /// </summary>
+    public bool PinchProtectGilTransfers { get; set; } = true;
+
+    /// <summary>
     /// Mirror the plugin's own log lines to <see cref="DevLogUrl"/>. Off by
     /// default and inert without a URL, so it costs a shipped build nothing.
     /// </summary>
